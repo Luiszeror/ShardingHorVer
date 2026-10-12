@@ -3,10 +3,10 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from .db import Cluster
+from .db import Cluster, NodoCaido
 from .seed import seed
 
 
@@ -19,6 +19,11 @@ async def lifespan(app):
 
 app = FastAPI(title="Sharding horizontal y vertical con PostgreSQL", lifespan=lifespan)
 cl = lambda: app.state.cluster  # noqa: E731
+
+
+@app.exception_handler(NodoCaido)
+def nodo_caido(_, e: NodoCaido):
+    return JSONResponse(status_code=503, content={"error": "nodo_no_disponible", "detalle": str(e), "teorema": e.teorema})
 
 
 class ClienteIn(BaseModel):
@@ -48,13 +53,15 @@ def home():
 def crear_cliente(c: ClienteIn):
     try:
         return cl().crear_cliente(c.nombre, c.email, c.ciudad, c.bio, c.preferencias)
+    except NodoCaido:
+        raise
     except Exception as e:
         raise HTTPException(409, str(e).splitlines()[0])
 
 
 @app.get("/clientes/{cid}")
-def get_cliente(cid: UUID, perfil: bool = False):
-    r = cl().obtener_cliente(cid, perfil)
+def get_cliente(cid: UUID, perfil: bool = False, lectura: str = "primary"):
+    r = cl().obtener_cliente(cid, perfil, lectura == "replica")
     if not r:
         raise HTTPException(404, "cliente no encontrado")
     return r
@@ -67,11 +74,11 @@ def del_cliente(cid: UUID):
 
 
 @app.get("/clientes")
-def buscar(ciudad: str | None = None, email: str | None = None, limit: int = 20):
+def buscar(ciudad: str | None = None, email: str | None = None, limit: int = 20, lectura: str = "primary"):
     if email:
         return {"resultado": cl().buscar_por_email(email)}
     if ciudad:
-        return cl().buscar_por_ciudad(ciudad, limit)
+        return cl().buscar_por_ciudad(ciudad, limit, lectura == "replica")
     raise HTTPException(400, "indique ciudad o email")
 
 
@@ -84,8 +91,8 @@ def crear_pedido(p: PedidoIn):
 
 
 @app.get("/clientes/{cid}/pedidos")
-def pedidos(cid: UUID):
-    return cl().pedidos_de(cid)
+def pedidos(cid: UUID, lectura: str = "primary"):
+    return cl().pedidos_de(cid, lectura == "replica")
 
 
 @app.get("/productos")
@@ -108,3 +115,42 @@ def demo_seed(n: int = 3000, reset: bool = False):
     if reset:
         cl().reset()
     return seed(cl(), n)
+
+
+# ---------- Replicación y simulación de fallos (demo CAP) ----------
+@app.get("/topologia")
+def topologia():
+    return cl().topologia()
+
+
+class ModoIn(BaseModel):
+    modo: str
+
+
+@app.post("/replicacion/modo")
+def set_modo(m: ModoIn):
+    try:
+        cl().set_modo(m.modo)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"modo": cl().modo}
+
+
+@app.post("/replicacion/demo")
+def replicacion_demo():
+    return cl().demo_replicacion()
+
+
+@app.post("/nodos/{nombre}/{rol}")
+def nodo_estado(nombre: str, rol: str, caido: bool = True):
+    try:
+        cl().set_caido(nombre, rol, caido)
+    except (KeyError, ValueError):
+        raise HTTPException(404, "nodo o rol inválido")
+    return {"nombre": nombre, "rol": rol, "caido": caido}
+
+
+@app.post("/nodos/restaurar")
+def restaurar():
+    cl().restaurar_nodos()
+    return {"ok": True}

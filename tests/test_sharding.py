@@ -120,7 +120,7 @@ def test_pedido_invalido_no_deja_basura(client):
 def test_compensacion_si_falla_el_fragmento_vertical(client, monkeypatch):
     email = f"{uuid4()}@x.com"
     class Roto:
-        def connection(self): raise RuntimeError("nodo perfil caído")
+        def write(self): raise RuntimeError("nodo perfil caído")
     monkeypatch.setattr(cluster(), "perfil", Roto())
     with pytest.raises(RuntimeError):
         cluster().crear_cliente("X", email, "Cali")

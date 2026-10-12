@@ -1,37 +1,46 @@
-# 3 shards horizontales + 1 nodo vertical (perfil) + la API.
+# 3 shards horizontales + 1 nodo vertical (perfil), CADA UNO con una réplica física, + la API.
 # Todo con PostgreSQL 16 (gratis, open source).
 x-pg: &pg
-  image: postgres:16-alpine
+  image: postgres:16
   environment:
     POSTGRES_USER: app
     POSTGRES_PASSWORD: app
     POSTGRES_DB: tienda
 
+x-primary-shard: &primary-shard
+  <<: *pg
+  volumes:
+    - ./sql/00_replication.sh:/docker-entrypoint-initdb.d/00_replication.sh:ro
+    - ./sql/shard_init.sql:/docker-entrypoint-initdb.d/10_init.sql:ro
+
+x-replica: &replica
+  <<: *pg
+  entrypoint: ["/replica-entrypoint.sh"]
+  volumes: ["./scripts/replica-entrypoint.sh:/replica-entrypoint.sh:ro"]
+
 services:
-  shard0:
-    <<: *pg
-    ports: ["5441:5432"]
-    volumes: ["./sql/shard_init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
-  shard1:
-    <<: *pg
-    ports: ["5442:5432"]
-    volumes: ["./sql/shard_init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
-  shard2:
-    <<: *pg
-    ports: ["5443:5432"]
-    volumes: ["./sql/shard_init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
+  shard0: {<<: *primary-shard, ports: ["5441:5432"]}
+  shard1: {<<: *primary-shard, ports: ["5442:5432"]}
+  shard2: {<<: *primary-shard, ports: ["5443:5432"]}
   perfil:
     <<: *pg
     ports: ["5444:5432"]
-    volumes: ["./sql/perfil_init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
+    volumes:
+      - ./sql/00_replication.sh:/docker-entrypoint-initdb.d/00_replication.sh:ro
+      - ./sql/perfil_init.sql:/docker-entrypoint-initdb.d/10_init.sql:ro
+
+  shard0-replica: {<<: *replica, ports: ["5451:5432"], depends_on: [shard0], environment: {PRIMARY_HOST: shard0, REPLICA_DELAY_MS: "1000", POSTGRES_PASSWORD: app}}
+  shard1-replica: {<<: *replica, ports: ["5452:5432"], depends_on: [shard1], environment: {PRIMARY_HOST: shard1, REPLICA_DELAY_MS: "1000", POSTGRES_PASSWORD: app}}
+  shard2-replica: {<<: *replica, ports: ["5453:5432"], depends_on: [shard2], environment: {PRIMARY_HOST: shard2, REPLICA_DELAY_MS: "1000", POSTGRES_PASSWORD: app}}
+  perfil-replica: {<<: *replica, ports: ["5454:5432"], depends_on: [perfil], environment: {PRIMARY_HOST: perfil, REPLICA_DELAY_MS: "1000", POSTGRES_PASSWORD: app}}
 
   api:
     build: .
     depends_on: [shard0, shard1, shard2, perfil]
+    restart: on-failure
     ports: ["8000:8000"]
     environment:
-      SHARD_DSNS: >-
-        postgresql://app:app@shard0:5432/tienda,
-        postgresql://app:app@shard1:5432/tienda,
-        postgresql://app:app@shard2:5432/tienda
+      SHARD_DSNS: postgresql://app:app@shard0:5432/tienda,postgresql://app:app@shard1:5432/tienda,postgresql://app:app@shard2:5432/tienda
+      SHARD_REPLICA_DSNS: postgresql://app:app@shard0-replica:5432/tienda,postgresql://app:app@shard1-replica:5432/tienda,postgresql://app:app@shard2-replica:5432/tienda
       PERFIL_DSN: postgresql://app:app@perfil:5432/tienda
+      PERFIL_REPLICA_DSN: postgresql://app:app@perfil-replica:5432/tienda

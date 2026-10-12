@@ -1,40 +1,255 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sharding Demo</title>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sharding Lab</title>
 <style>
-body{font-family:system-ui,sans-serif;max-width:980px;margin:1.5rem auto;padding:0 1rem;color:#222}
-h1{font-size:1.3rem}section{border:1px solid #ddd;border-radius:8px;padding:1rem;margin:1rem 0}
-button{padding:.4rem .8rem;margin:.2rem}input{padding:.35rem;margin:.2rem}
-pre{background:#f5f5f5;padding:.7rem;overflow:auto;border-radius:6px;font-size:.8rem}
-.bars{display:flex;gap:1rem;align-items:flex-end;height:140px}.bar{flex:1;background:#4f7cff;color:#fff;text-align:center;border-radius:4px 4px 0 0;min-height:18px;font-size:.8rem}
-.bar.v{background:#e8833a}
-</style></head><body>
-<h1>Sharding horizontal (3 shards) + vertical (nodo perfil) — PostgreSQL</h1>
-<section><b>1. Carga y distribución</b><br>
-<button onclick="seed()">Sembrar 3000 clientes (reset)</button><button onclick="stats()">Actualizar stats</button>
-<div class="bars" id="bars"></div><pre id="stats"></pre></section>
-<section><b>2. Crear cliente (core → shard por hash · perfil → nodo vertical)</b><br>
-<input id="n" placeholder="nombre" value="Ada"><input id="e" placeholder="email"><input id="c" placeholder="ciudad" value="Cali">
-<input id="b" placeholder="bio" value="Hola mundo"><button onclick="crear()">Crear</button></section>
-<section><b>3. Consultar por id</b> (1 shard) o con perfil (shard + nodo vertical)<br>
-<input id="id" size="40" placeholder="uuid"><button onclick="get(false)">Core</button><button onclick="get(true)">Core + perfil</button>
-<button onclick="ped()">Pedido de prueba</button><button onclick="peds()">Ver pedidos</button></section>
-<section><b>4. Buscar por ciudad</b> (sin shard key → scatter-gather a todos)<br>
-<input id="q" value="Bogotá"><button onclick="ciudad()">Buscar</button></section>
-<pre id="out">Resultados aquí…</pre>
+:root{
+  --bg:#f4f6fb;--card:#fff;--ink:#16202e;--muted:#64708a;--line:#e1e6f0;
+  --blue:#3d6bff;--blue-soft:#e8eeff;--orange:#e8833a;--orange-soft:#fff0e3;
+  --green:#12a05c;--green-soft:#e2f6ec;--red:#d9363e;--red-soft:#fde7e8;--amber:#b7791f;--amber-soft:#fff4d6;
+  --code:#f0f3f9;--shadow:0 1px 2px rgba(20,30,60,.06),0 6px 20px rgba(20,30,60,.05);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1420;--card:#171e2e;--ink:#e8edf7;--muted:#8d9ab5;--line:#27314a;
+  --blue:#6c8cff;--blue-soft:#1d2a52;--orange:#f09a5c;--orange-soft:#3a2a1d;
+  --green:#3ccf8b;--green-soft:#15352a;--red:#ff6b72;--red-soft:#3b1c20;--amber:#e9b64d;--amber-soft:#3a3018;
+  --code:#111827;--shadow:none}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{background:linear-gradient(120deg,#2b48d8,#6b3df0);color:#fff;padding:1.4rem 1rem 3.2rem}
+.wrap{max-width:1100px;margin:0 auto;padding:0 1rem}
+header h1{margin:0;font-size:1.5rem;letter-spacing:-.01em}
+header p{margin:.3rem 0 0;opacity:.85;font-size:.92rem}
+.pills{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.9rem}
+.pill{background:rgba(255,255,255,.16);border-radius:999px;padding:.2rem .7rem;font-size:.8rem}
+nav{display:flex;gap:.3rem;margin:-2.1rem auto 1rem;max-width:1100px;padding:0 1rem;overflow-x:auto}
+nav button{flex:1;min-width:130px;border:0;background:var(--card);color:var(--muted);padding:.75rem .5rem;border-radius:12px;font:inherit;font-weight:600;cursor:pointer;box-shadow:var(--shadow)}
+nav button.on{color:#fff;background:var(--blue)}
+main{max-width:1100px;margin:0 auto;padding:0 1rem 3rem}
+.tab{display:none}.tab.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1.1rem 1.2rem;margin-bottom:1rem;box-shadow:var(--shadow)}
+.card h2{margin:0 0 .2rem;font-size:1.05rem}.sub{color:var(--muted);font-size:.86rem;margin:0 0 .9rem}
+.grid{display:grid;gap:1rem}.g4{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin-bottom:1rem}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:.8rem 1rem;box-shadow:var(--shadow)}
+.kpi b{display:block;font-size:1.5rem;letter-spacing:-.02em}.kpi span{color:var(--muted);font-size:.8rem}
+button.btn{border:1px solid var(--line);background:var(--card);color:var(--ink);padding:.5rem .9rem;border-radius:9px;font:inherit;font-weight:600;cursor:pointer}
+button.btn:hover{border-color:var(--blue)}button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+button.danger{color:var(--red)}button:disabled{opacity:.5;cursor:wait}
+input,select{font:inherit;padding:.5rem .65rem;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--ink);min-width:0}
+.row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.4rem 0}
+.row input{flex:1;min-width:120px}
+/* topología */
+.node{border:1px solid var(--line);border-radius:14px;padding:.8rem;background:var(--card);box-shadow:var(--shadow)}
+.node.v{border-color:var(--orange)}
+.node h3{margin:0 0 .5rem;font-size:.95rem;display:flex;justify-content:space-between;align-items:center}
+.tag{font-size:.68rem;border-radius:999px;padding:.1rem .5rem;background:var(--blue-soft);color:var(--blue);font-weight:700}
+.v .tag{background:var(--orange-soft);color:var(--orange)}
+.inst{border-radius:10px;padding:.55rem .65rem;background:var(--green-soft);border:1px solid transparent;margin:.3rem 0}
+.inst.rep{background:var(--blue-soft)}.v .inst.rep{background:var(--orange-soft)}
+.inst.down{background:var(--red-soft);border-color:var(--red)}
+.inst .t{display:flex;justify-content:space-between;font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.inst .n{font-size:1.25rem;font-weight:700}.inst small{color:var(--muted)}
+.flow{text-align:center;color:var(--muted);font-size:.74rem;line-height:1}
+.flow.sync{color:var(--green);font-weight:700}.flow.async{color:var(--amber);font-weight:700}
+.flow i{display:inline-block;animation:bob 1.2s ease-in-out infinite;font-style:normal}
+@keyframes bob{50%{transform:translateY(3px)}}
+.mini{font-size:.72rem;padding:.15rem .5rem;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+.mini:hover{border-color:var(--red);color:var(--red)}
+.down .mini{border-color:var(--green);color:var(--green)}
+/* barras */
+.bars{display:flex;flex-direction:column;gap:.55rem}.bar{display:flex;align-items:center;gap:.6rem;font-size:.85rem}
+.bar .l{width:62px;font-weight:600}.bar .track{flex:1;background:var(--code);border-radius:8px;height:26px;overflow:hidden}
+.bar .fill{height:100%;background:var(--blue);color:#fff;display:flex;align-items:center;padding-left:.6rem;font-weight:600;transition:width .5s;white-space:nowrap}
+.bar .fill.o{background:var(--orange)}
+/* resultados */
+.route{display:flex;flex-wrap:wrap;gap:.4rem;align-items:center;margin:.4rem 0}
+.chip{padding:.2rem .65rem;border-radius:999px;font-size:.8rem;font-weight:700;background:var(--blue-soft);color:var(--blue)}
+.chip.rep{background:var(--amber-soft);color:var(--amber)}.chip.per{background:var(--orange-soft);color:var(--orange)}
+.arrow{color:var(--muted)}
+.alert{border-radius:10px;padding:.6rem .8rem;margin:.5rem 0;font-size:.88rem}
+.alert.ok{background:var(--green-soft);color:var(--green)}.alert.warn{background:var(--amber-soft);color:var(--amber)}.alert.err{background:var(--red-soft);color:var(--red)}
+.alert.info{background:var(--blue-soft);color:var(--blue)}
+details summary{cursor:pointer;color:var(--muted);font-size:.82rem;margin-top:.5rem}
+pre{background:var(--code);padding:.7rem;border-radius:9px;overflow:auto;font-size:.78rem;margin:.4rem 0 0;max-height:300px}
+table{width:100%;border-collapse:collapse;font-size:.85rem}th,td{text-align:left;padding:.4rem .5rem;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;font-size:.76rem;text-transform:uppercase}
+.switch{display:inline-flex;background:var(--code);border-radius:10px;padding:3px}
+.switch button{border:0;background:transparent;color:var(--muted);padding:.45rem 1rem;border-radius:8px;font:inherit;font-weight:700;cursor:pointer}
+.switch button.on{background:var(--green);color:#fff}.switch button.on.as{background:var(--amber)}
+.cmp{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.8rem}
+.cap{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:.8rem}
+.cap div{border:1px solid var(--line);border-radius:12px;padding:.7rem .9rem}.cap b{display:block;margin-bottom:.2rem}
+.toast{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:.55rem 1rem;border-radius:10px;font-size:.88rem;opacity:0;transition:.3s;pointer-events:none;z-index:9}
+.toast.on{opacity:1}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>Sharding Lab · PostgreSQL</h1>
+  <p>Particionamiento horizontal + vertical, replicación síncrona/asíncrona y teorema CAP, en una sola app.</p>
+  <div class="pills"><span class="pill">3 shards (horizontal)</span><span class="pill">1 nodo de perfil (vertical)</span><span class="pill">1 réplica por nodo</span><span class="pill" id="modoPill">modo: …</span></div>
+</div></header>
+<nav id="nav">
+  <button class="on" data-t="arq">① Arquitectura</button>
+  <button data-t="ops">② Operaciones</button>
+  <button data-t="rep">③ Replicación</button>
+  <button data-t="cap">④ Fallos y CAP</button>
+</nav>
+<main>
+
+<!-- ============ ARQUITECTURA ============ -->
+<section class="tab on" id="arq">
+  <div class="kpis" id="kpis"></div>
+  <div class="card">
+    <h2>Topología del clúster</h2>
+    <p class="sub">Cada nodo lógico tiene un primario (lecturas y escrituras) y una réplica (solo lectura). Las filas de la réplica se actualizan con retraso: compáralas con las del primario.</p>
+    <div class="grid g4" id="topo"></div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h2>Distribución horizontal</h2><p class="sub">Clientes por shard (hash del <code>cliente_id</code>).</p>
+      <div class="row"><button class="btn primary" onclick="seed()" id="bSeed">Sembrar 3000 clientes (reset)</button><button class="btn" onclick="refresh()">Actualizar</button></div>
+      <div class="bars" id="bars"></div></div>
+    <div class="card"><h2>Separación vertical</h2><p class="sub">Columnas calientes en el shard; columnas pesadas (bio, avatar, preferencias) en otro servidor.</p>
+      <table><tr><th>Fragmento</th><th>Dónde</th><th>Columnas</th></tr>
+      <tr><td><code>clientes_core</code></td><td>shard0/1/2</td><td>id, nombre, email, ciudad</td></tr>
+      <tr><td><code>clientes_perfil</code></td><td>perfil</td><td>bio, avatar, preferencias</td></tr>
+      <tr><td><code>pedidos</code>, <code>items</code></td><td>shard del cliente</td><td>co-ubicados</td></tr>
+      <tr><td><code>productos</code></td><td>todos los shards</td><td>tabla replicada</td></tr></table>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OPERACIONES ============ -->
+<section class="tab" id="ops">
+  <div class="grid g2">
+    <div class="card"><h2>Crear cliente</h2><p class="sub">El core va al shard que indica el hash; el perfil, al nodo vertical.</p>
+      <div class="row"><input id="n" placeholder="Nombre" value="Ada"><input id="e" placeholder="Email" value="ada@correo.com"></div>
+      <div class="row"><input id="c" placeholder="Ciudad" value="Cali"><input id="b" placeholder="Bio" value="Hola mundo"></div>
+      <button class="btn primary" onclick="crear()">Crear cliente</button></div>
+    <div class="card"><h2>Consultar por id</h2><p class="sub">Con la shard key se toca un solo nodo; con perfil, dos.</p>
+      <div class="row"><input id="id" placeholder="uuid del cliente"></div>
+      <div class="row"><label>Leer de: <select id="lect"><option value="primary">primario</option><option value="replica">réplica</option></select></label></div>
+      <div class="row"><button class="btn" onclick="get(false)">Solo core</button><button class="btn" onclick="get(true)">Core + perfil</button><button class="btn" onclick="ped()">Crear pedido de prueba</button><button class="btn" onclick="peds()">Ver pedidos</button></div></div>
+  </div>
+  <div class="card"><h2>Buscar por ciudad</h2><p class="sub">Sin shard key no se sabe dónde están los datos: scatter-gather a todos los shards.</p>
+    <div class="row"><input id="q" value="Bogotá" style="max-width:240px"><button class="btn" onclick="ciudad()">Buscar</button></div></div>
+  <div class="card" id="res"><h2>Resultado</h2><p class="sub">Aquí verás qué nodos respondieron.</p></div>
+</section>
+
+<!-- ============ REPLICACIÓN ============ -->
+<section class="tab" id="rep">
+  <div class="card"><h2>Modo de replicación</h2>
+    <p class="sub">Se aplica a todos los primarios (<code>synchronous_commit = remote_apply</code>). Las réplicas aplican los cambios con 1 s de retraso para que la diferencia se vea.</p>
+    <div class="switch"><button id="mSync" onclick="modo('sync')">Síncrona</button><button id="mAsync" class="as" onclick="modo('async')">Asíncrona</button></div>
+    <div class="cmp" style="margin-top:1rem">
+      <div class="alert ok"><b>Síncrona</b> — el primario espera a que la réplica confirme. Consistencia fuerte; cada escritura es más lenta y, sin réplica, se bloquea.</div>
+      <div class="alert warn"><b>Asíncrona</b> — el primario confirma y replica después. Más rápida y disponible; la réplica puede quedar desactualizada (consistencia eventual).</div>
+    </div></div>
+  <div class="card"><h2>Experimento: ¿qué ve la réplica?</h2>
+    <p class="sub">Escribe un cliente y mide cuánto tarda en confirmarse y cuándo aparece en la réplica. Ejecútalo en cada modo.</p>
+    <button class="btn primary" id="bDemo" onclick="demo()">Ejecutar experimento</button>
+    <table style="margin-top:.8rem"><thead><tr><th>Modo</th><th>Escritura (ms)</th><th>¿Visible en la réplica al instante?</th><th>Retraso réplica (ms)</th></tr></thead><tbody id="hist"><tr><td colspan="4" style="color:var(--muted)">Sin ejecuciones todavía</td></tr></tbody></table></div>
+</section>
+
+<!-- ============ CAP ============ -->
+<section class="tab" id="cap">
+  <div class="card"><h2>Simular fallos de nodos</h2>
+    <p class="sub">Apaga primarios o réplicas desde la pestaña Arquitectura (botón «Simular caída» en cada nodo) y prueba qué pasa:</p>
+    <div class="row"><button class="btn" onclick="capLeer()">Leer un cliente</button><button class="btn" onclick="capEscribir()">Crear un cliente</button><button class="btn" onclick="restaurar()">Restaurar todos los nodos</button></div>
+    <div id="capRes"></div></div>
+  <div class="card"><h2>Teorema CAP</h2>
+    <div class="cap">
+      <div><b>C · Consistencia</b>Todos los nodos ven los mismos datos al mismo tiempo. → <i>Modo síncrono; rechazar escrituras si no hay primario.</i></div>
+      <div><b>A · Disponibilidad</b>El sistema siempre responde, aunque el dato no sea el más reciente. → <i>Failover de lectura a la réplica.</i></div>
+      <div><b>P · Tolerancia a particiones</b>Sigue funcionando con fallos de red entre nodos. → <i>Inevitable en un sistema distribuido.</i></div>
+    </div>
+    <div class="alert info" style="margin-top:1rem"><b>Lo que hace este sistema:</b> lecturas → <b>AP</b> (si cae el primario, responde la réplica, posiblemente desactualizada). Escrituras → <b>CP</b> (si cae el primario, o en modo síncrono la réplica, se rechaza antes que arriesgar datos inconsistentes). Un banco elegiría CP también para lecturas; una red social, AP.</div></div>
+</section>
+</main>
+<div class="toast" id="toast"></div>
+
 <script>
-const $=i=>document.getElementById(i),show=x=>$('out').textContent=JSON.stringify(x,null,2);
-const j=async(u,o)=>{const r=await fetch(u,o);if(r.status==204)return{ok:true};const t=await r.text();try{return JSON.parse(t)}catch(e){return{error:r.status,detalle:t}}};
-const post=(u,b)=>j(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
-async function stats(){const s=await j('/stats');$('stats').textContent=JSON.stringify(s,null,2);
- const m=Math.max(...s.shards.map(x=>x.clientes),1);
- $('bars').innerHTML=s.shards.map(x=>`<div class=bar style="height:${x.clientes/m*130+8}px">shard${x.shard}<br>${x.clientes} clientes</div>`).join('')+
- `<div class="bar v" style="height:60px">perfil<br>${s.perfil.perfiles} perfiles</div>`}
-async function seed(){show('Sembrando… (puede tardar unos segundos)');const r=await post('/demo/seed?n=3000&reset=true',{});show(r);await stats()}
-async function crear(){const r=await post('/clientes',{nombre:$('n').value,email:$('e').value||Date.now()+'@m.com',ciudad:$('c').value,bio:$('b').value});$('id').value=r.id||'';show(r);stats()}
-async function get(p){show(await j('/clientes/'+$('id').value+(p?'?perfil=true':'')))}
-async function ped(){show(await post('/pedidos',{cliente_id:$('id').value,items:[{producto_id:1,cantidad:2},{producto_id:3,cantidad:1}]}));stats()}
-async function peds(){show(await j('/clientes/'+$('id').value+'/pedidos'))}
-async function ciudad(){show(await j('/clientes?limit=5&ciudad='+encodeURIComponent($('q').value)))}
-stats();
-</script></body></html>
+const $=i=>document.getElementById(i);
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+async function api(u,o){const r=await fetch(u,o);if(r.status==204)return{ok:true};const t=await r.text();let d;try{d=JSON.parse(t)}catch(e){d={detalle:t}}d._status=r.status;return d}
+const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:b===undefined?undefined:JSON.stringify(b)});
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2200)}
+
+// ---- tabs
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button,.tab').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on');$(b.dataset.t).classList.add('on')});
+
+// ---- arquitectura
+let TOPO=null;
+async function refresh(){
+  const [t,s]=await Promise.all([api('/topologia'),api('/stats').catch(()=>null)]);
+  TOPO=t;render(t,s&&s.shards?s:null)}
+function render(t,s){
+  $('modoPill').textContent='modo: '+(t.modo==='sync'?'síncrono':'asíncrono');
+  $('mSync').classList.toggle('on',t.modo==='sync');$('mAsync').classList.toggle('on',t.modo==='async');
+  $('topo').innerHTML=t.nodos.map(n=>{
+    const v=n.tipo==='vertical',p=n.primario,r=n.replica;
+    const lag=(r&&p.filas!=null&&r.filas!=null&&p.filas!==r.filas)?` · ${p.filas-r.filas>0?'faltan '+(p.filas-r.filas):'sobran '+(r.filas-p.filas)}`:'';
+    const st=r&&r.estado?`${r.estado.state} · ${r.estado.sync_state}`:'—';
+    return `<div class="node ${v?'v':''}"><h3>${n.nombre}<span class="tag">${n.tipo}</span></h3>
+     <div class="inst ${p.caido?'down':''}"><div class="t"><span>Primario</span><button class="mini" onclick="caida('${n.nombre}','primary',${!p.caido})">${p.caido?'Restaurar':'Simular caída'}</button></div>
+       <div class="n">${p.caido?'⛔ caído':(p.filas??'—')}</div><small>${v?'perfiles':'clientes'} · lectura/escritura</small></div>
+     ${r?`<div class="flow ${t.modo}"><i>↓</i> ${t.modo==='sync'?'síncrona':'asíncrona'}</div>
+     <div class="inst rep ${r.caido?'down':''}"><div class="t"><span>Réplica</span><button class="mini" onclick="caida('${n.nombre}','replica',${!r.caido})">${r.caido?'Restaurar':'Simular caída'}</button></div>
+       <div class="n">${r.caido?'⛔ caída':(r.filas??'—')}</div><small>solo lectura${lag}<br>${st}</small></div>`:''}</div>`}).join('');
+  if(s){
+    const tot=s.total.clientes||0,mx=Math.max(...s.shards.map(x=>x.clientes),1);
+    $('kpis').innerHTML=[['Clientes',tot],['Pedidos',s.total.pedidos],['Ventas',Number(s.total.ventas).toLocaleString('es-CO',{maximumFractionDigits:0})],['Perfiles',s.perfil.perfiles]]
+      .map(([a,b])=>`<div class="kpi"><b>${b}</b><span>${a}</span></div>`).join('');
+    $('bars').innerHTML=s.shards.map(x=>`<div class="bar"><span class="l">shard${x.shard}</span><div class="track"><div class="fill" style="width:${Math.max(x.clientes/mx*100,2)}%">${x.clientes} · ${tot?(x.clientes/tot*100).toFixed(1):0}%</div></div></div>`).join('')+
+      `<div class="bar"><span class="l">perfil</span><div class="track"><div class="fill o" style="width:${Math.max(s.perfil.perfiles/Math.max(tot,1)*100,2)}%">${s.perfil.perfiles} perfiles</div></div></div>`}}
+async function seed(){const b=$('bSeed');b.disabled=true;b.textContent='Sembrando…';
+  const r=await post('/demo/seed?n=3000&reset=true');b.disabled=false;b.textContent='Sembrar 3000 clientes (reset)';
+  toast(r.error?'Error: '+(r.detalle||r.error):'3000 clientes sembrados');await refresh()}
+async function caida(n,rol,c){await post(`/nodos/${n}/${rol}?caido=${c}`);toast(`${n} ${rol}: ${c?'caído (simulado)':'restaurado'}`);refresh()}
+async function restaurar(){await post('/nodos/restaurar');toast('Nodos restaurados');refresh()}
+
+// ---- operaciones
+function chips(nodos){return '<div class="route">'+nodos.map((n,i)=>`${i?'<span class="arrow">→</span>':''}<span class="chip ${n.endsWith('replica')?'rep':n==='perfil'?'per':''}">${n}</span>`).join('')+'</div>'}
+function panel(titulo,d,extra=''){
+  let h=`<h2>${titulo}</h2>`;
+  if(d.error){h+=`<div class="alert err"><b>${d.teorema?'Decisión '+d.teorema+': ':''}</b>${esc(d.detalle||d.error)}</div>`}
+  else{if(d._nodos_consultados)h+=`<p class="sub">Nodos consultados:</p>`+chips(d._nodos_consultados);
+    if(d._posiblemente_desactualizado)h+=`<div class="alert warn">Respondió una réplica: el dato puede estar desactualizado (consistencia eventual).</div>`;
+    h+=extra}
+  h+=`<details><summary>Ver JSON</summary><pre>${esc(JSON.stringify(d,null,2))}</pre></details>`;
+  $('res').innerHTML=h;$('res').scrollIntoView({behavior:'smooth',block:'nearest'})}
+const L=()=>$('lect').value;
+async function crear(){const d=await post('/clientes',{nombre:$('n').value,email:($('e').value.replace('@',Date.now()%100000+'@')),ciudad:$('c').value,bio:$('b').value});
+  if(d.id){$('id').value=d.id;panel('Cliente creado',d,`<div class="alert ok">Core → <b>shard${d.shard}</b> (hash del id) · perfil → <b>perfil</b></div>`)}else panel('No se pudo crear',d.detail?{error:1,detalle:d.detail}:d);refresh()}
+async function get(p){const d=await api(`/clientes/${$('id').value}?perfil=${p}&lectura=${L()}`);
+  panel('Cliente',d,d.id?`<table><tr><th>Nombre</th><td>${esc(d.nombre)}</td></tr><tr><th>Email</th><td>${esc(d.email)}</td></tr><tr><th>Ciudad</th><td>${esc(d.ciudad)}</td></tr>${d.perfil?`<tr><th>Bio</th><td>${esc((d.perfil.bio||'').slice(0,80))}</td></tr>`:''}</table>`:'')}
+async function ped(){const d=await post('/pedidos',{cliente_id:$('id').value,items:[{producto_id:1,cantidad:2},{producto_id:3,cantidad:1}]});
+  panel('Pedido',d,d.id?`<div class="alert ok">Pedido guardado en <b>shard${d.shard}</b>, el mismo del cliente (transacción local). Total ${Number(d.total).toLocaleString('es-CO')}</div>`:'');refresh()}
+async function peds(){const d=await api(`/clientes/${$('id').value}/pedidos?lectura=${L()}`);
+  panel('Pedidos del cliente',d,d.pedidos?`<table><tr><th>Pedido</th><th>Total</th></tr>${d.pedidos.map(p=>`<tr><td>${p.id.slice(0,8)}</td><td>${Number(p.total).toLocaleString('es-CO')}</td></tr>`).join('')||'<tr><td colspan=2>Sin pedidos</td></tr>'}</table>`:'')}
+async function ciudad(){const d=await api(`/clientes?limit=8&ciudad=${encodeURIComponent($('q').value)}&lectura=${L()}`);
+  panel('Búsqueda por ciudad (scatter-gather)',d,d.resultados?`<p>${d.total_encontrados} coincidencias (mostrando ${d.resultados.length})</p><table><tr><th>Nombre</th><th>Email</th><th>Shard</th></tr>${d.resultados.map(r=>`<tr><td>${esc(r.nombre)}</td><td>${esc(r.email)}</td><td>shard${r._shard}</td></tr>`).join('')}</table>`:'')}
+
+// ---- replicación
+async function modo(m){$('mSync').disabled=$('mAsync').disabled=true;const d=await post('/replicacion/modo',{modo:m});$('mSync').disabled=$('mAsync').disabled=false;toast('Modo '+(d.modo==='sync'?'síncrono':'asíncrono'));refresh()}
+let runs=[];
+async function demo(){const b=$('bDemo');b.disabled=true;b.textContent='Ejecutando…';const d=await post('/replicacion/demo');b.disabled=false;b.textContent='Ejecutar experimento';
+  if(d.error){toast(d.detalle);return}runs.unshift(d);
+  $('hist').innerHTML=runs.map(r=>`<tr><td>${r.modo==='sync'?'Síncrona':'Asíncrona'}</td><td>${r.escritura_ms}</td><td>${r.visible_en_replica_inmediato?'<span class="chip" style="background:var(--green-soft);color:var(--green)">Sí</span>':'<span class="chip rep">No</span>'}</td><td>${r.retraso_replica_ms??'—'}</td></tr>`).join('')}
+
+// ---- CAP
+async function capLeer(){
+  const d=await api('/clientes?limit=5&ciudad=Bogot%C3%A1');
+  $('capRes').innerHTML=d.error?`<h3>Lectura (scatter-gather)</h3><div class="alert err"><b>${d.teorema}</b> · ${esc(d.detalle)}</div>`:`<h3>Lectura (scatter-gather a todos los shards)</h3>${chips(d._nodos_consultados)}${d._posiblemente_desactualizado?'<div class="alert warn"><b>AP</b> · algún primario cayó y respondió su réplica (dato posiblemente desactualizado) en vez de fallar.</div>':'<div class="alert ok">Respondieron todos los primarios (datos más recientes).</div>'}`}
+async function capEscribir(){
+  const d=await post('/clientes',{nombre:'CAP',email:`cap${Date.now()}@x.com`,ciudad:'Cali'});
+  $('capRes').innerHTML=d.error?`<h3>Escritura</h3><div class="alert err"><b>${d.teorema}</b> · ${esc(d.detalle)}<br>El sistema prefiere rechazar la escritura antes que arriesgar inconsistencia.</div>`:`<h3>Escritura</h3><div class="alert ok">Cliente creado en shard${d.shard}.</div>`;refresh()}
+refresh();setInterval(()=>{if(document.hidden)return;refresh()},4000);
+</script>
+</body>
+</html>
